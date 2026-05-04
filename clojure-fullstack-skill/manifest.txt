@@ -1,3 +1,4 @@
+README.md
 SKILL.md
 references/agents-md-playbook.md
 references/backend-kit-patterns.md

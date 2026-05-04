@@ -1,13 +1,13 @@
 ---
-name: clojure-fullstack-hospital-development
-description: Use this skill when developing, modifying, reviewing, debugging, or scaffolding full-stack Clojure systems inspired by the Hospital project. The default stack is Kit framework on the backend, Ant Design plus Reagent on the web frontend, shared Clojure/ClojureScript contracts, and ClojureDart plus Flutter for mobile. Use it for AGENTS.md driven project work, Integrant configuration, APIs, database migrations, Reagent UI, antd pages, ClojureDart mobile screens, cross-stack feature delivery, testing, security, and medical or admin-domain workflows.
+name: clojure-fullstack-development
+description: Use this skill when developing, modifying, reviewing, debugging, or scaffolding full-stack Clojure systems. The default stack is Kit framework on the backend, Ant Design plus Reagent on the web frontend, shared Clojure/ClojureScript contracts, and ClojureDart plus Flutter for mobile. Use it for AGENTS.md driven project work, Integrant configuration, APIs, database migrations, Reagent UI, antd pages, ClojureDart mobile screens, cross-stack feature delivery, testing, security, and business-domain workflows.
 ---
 
-# Clojure Full-Stack Hospital Development Skill
+# Clojure Full-Stack Development Skill
 
 ## Purpose
 
-Act as a careful Clojure full-stack pair programmer for Hospital-style systems.
+Act as a careful Clojure full-stack pair programmer for real-world business systems.
 
 The default architecture is:
 
@@ -17,7 +17,7 @@ The default architecture is:
 - Mobile: ClojureDart and Flutter, with `.cljd` business UI in `src/` and Dart or Flutter bridge code in `lib/` only where needed.
 - Development style: inspect first, respect `AGENTS.md`, keep modules small, use REPL-driven workflow, generate complete code when asked.
 
-This skill is optimized for hospital, clinic, scheduling, medical record, operations, and admin-dashboard products, but the rules also work for other business systems.
+This skill is optimized for clinic, scheduling, medical record, operations, admin-dashboard, and other business systems.
 
 ## Prime Directive
 
@@ -27,7 +27,7 @@ When project files are available, always check relevant `AGENTS.md` files first.
 
 ## AGENTS.md Driven Workflow
 
-Hospital-style projects may contain multiple `AGENTS.md` files. Use this precedence model:
+Business-oriented projects may contain multiple `AGENTS.md` files. Use this precedence model:
 
 1. Explicit user request in the current conversation.
 2. Safety, privacy, and data protection constraints.
@@ -54,7 +54,7 @@ When responding, summarize the relevant local rules briefly before implementatio
 
 If no `AGENTS.md` files are present, say that none were found and proceed with this skill's defaults.
 
-## Hospital Project Lessons To Preserve
+## Project Lessons To Preserve
 
 Use these as defaults when they do not conflict with actual project files:
 
@@ -134,7 +134,7 @@ resources/
   migrations/
   sql/
   public/
-src/hospital/
+src/app/
   core.clj
   config.clj
   domain/
@@ -149,7 +149,7 @@ src/hospital/
     api.cljc
 frontend/
   AGENTS.md
-  src/hospital/frontend/
+  src/app/frontend/
     app.cljs
     api.cljs
     routes.cljs
@@ -161,7 +161,7 @@ mobile/
   deps.edn
   pubspec.yaml
   lib/main.dart
-  src/hospital/mobile/
+  src/app/mobile/
     main.cljd
     screens/
     components/
@@ -188,8 +188,8 @@ For a new backend or full-stack project, use the current project-pinned Kit temp
 
 ```sh
 clj -Ttools install io.github.kit-clj/kit-template '{:git/tag "<kit-version>"}' :as kit
-clj -T:new :template kit :name hospital
-cd hospital
+clj -T:new :template kit :name app
+cd app
 clj -M:dev
 ```
 
@@ -253,23 +253,23 @@ Use Integrant for long-lived resources:
 Declare in `resources/system.edn`:
 
 ```clojure
-:hospital.appointment/service
+:app.appointment/service
 {:db #ig/ref :db.sql/connection
- :audit #ig/ref :hospital.audit/service}
+ :audit #ig/ref :app.audit/service}
 ```
 
 Initialize in Clojure:
 
 ```clojure
-(ns hospital.appointment.service
+(ns app.appointment.service
   (:require
     [integrant.core :as ig]))
 
-(defmethod ig/init-key :hospital.appointment/service
+(defmethod ig/init-key :app.appointment/service
   [_ opts]
   opts)
 
-(defmethod ig/halt-key! :hospital.appointment/service
+(defmethod ig/halt-key! :app.appointment/service
   [_ _service]
   nil)
 ```
@@ -286,7 +286,7 @@ Do not create global connections or clients in handlers:
 Preserve existing Aero profile forms. Do not hardcode production secrets.
 
 ```clojure
-:hospital.external/insurance-client
+:app.external/insurance-client
 {:base-url #profile {:dev "http://localhost:9010"
                      :test "http://localhost:9011"
                      :prod #env INSURANCE_BASE_URL}
@@ -316,9 +316,9 @@ Guidelines:
 Adapt to the project's router style. A common pattern:
 
 ```clojure
-(ns hospital.web.routes.appointments
+(ns app.web.routes.appointments
   (:require
-    [hospital.web.controllers.appointments :as appointments]))
+    [app.web.controllers.appointments :as appointments]))
 
 (defn routes [{:keys [appointment-service]}]
   ["/api/appointments"
@@ -332,7 +332,7 @@ Adapt to the project's router style. A common pattern:
 ### Backend Controller Pattern
 
 ```clojure
-(ns hospital.web.controllers.appointments
+(ns app.web.controllers.appointments
   (:require
     [ring.util.response :as response]))
 
@@ -442,7 +442,7 @@ Acceptable patterns:
 If no wrapper exists, create a small local adapter namespace:
 
 ```clojure
-(ns hospital.frontend.antd
+(ns app.frontend.antd
   (:require
     [reagent.core :as r]
     ["antd" :refer [Button Card DatePicker Drawer Form Input Modal Select Space Table Tag message]]))
@@ -483,7 +483,7 @@ If the build uses advanced compilation, check whether direct named imports and p
 Centralize HTTP calls:
 
 ```clojure
-(ns hospital.frontend.api
+(ns app.frontend.api
   (:require
     [ajax.core :as ajax]
     [clojure.string :as str]))
@@ -521,10 +521,10 @@ A typical admin page contains:
 - Loading and error display.
 
 ```clojure
-(ns hospital.frontend.pages.appointments
+(ns app.frontend.pages.appointments
   (:require
-    [hospital.frontend.antd :as antd]
-    [hospital.frontend.api :as api]
+    [app.frontend.antd :as antd]
+    [app.frontend.api :as api]
     [reagent.core :as r]))
 
 (defn- columns []
@@ -582,7 +582,7 @@ Healthcare workflows are date-sensitive. Always inspect project conventions for 
 Use `.cljc` for definitions shared by backend and ClojureScript where practical:
 
 ```clojure
-(ns hospital.shared.appointment
+(ns app.shared.appointment
   (:require
     [malli.core :as m]))
 
@@ -637,7 +637,7 @@ lib/main.dart
 src/**.cljd
 ```
 
-Hospital-style mobile defaults:
+Business-oriented mobile defaults:
 
 - `lib/` is the Flutter/Dart bridge layer.
 - `src/` contains `.cljd` business UI and logic.
@@ -668,7 +668,7 @@ clj -M:cljd flutter -d <device-id>
 Dart package imports use strings:
 
 ```clojure
-(ns hospital.mobile.main
+(ns app.mobile.main
   (:require
     ["package:flutter/material.dart" :as m]
     [cljd.flutter :as f]))
@@ -736,7 +736,7 @@ Prefer `cljd.flutter` for Flutter UI:
   m/Scaffold
   .body
   m/Center
-  (m/Text "Hospital"))
+  (m/Text "App"))
 ```
 
 Use:
@@ -810,7 +810,7 @@ When adding a feature across backend, web, and mobile:
 
 ## Security, Privacy, And Compliance Defaults
 
-For hospital-style data, apply these engineering defaults:
+For regulated or sensitive data, apply these engineering defaults:
 
 - Never log raw patient names, identifiers, medical notes, addresses, phone numbers, tokens, or credentials.
 - Do not put sensitive data in frontend localStorage unless the project explicitly approves and protects it.
