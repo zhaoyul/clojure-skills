@@ -10,6 +10,14 @@ Add this skill repository with:
 npx skills@latest add zhaoyul/clojure-skills
 ```
 
+After installation, this repository will make the included skill available in your local skills environment.
+
+## What gets installed
+
+This repository currently includes:
+
+- `clojure-fullstack-skill`
+
 ## Included skill
 
 ### `clojure-fullstack-skill`
@@ -23,6 +31,24 @@ A full-stack Clojure development skill for projects that combine:
 - AGENTS.md-driven project workflows
 
 Although the skill was originally shaped by hospital-style product work, it is also useful for broader business applications that use the same architecture and development patterns.
+
+## Example prompts
+
+You can invoke this skill with prompts like:
+
+- `Use the clojure-fullstack-skill to scaffold a new Kit + Reagent + ClojureDart app.`
+- `Use clojure-fullstack-skill to add a patient search page with a Kit API and Reagent frontend.`
+- `Use clojure-fullstack-skill to review this full-stack Clojure codebase and suggest a safer AGENTS.md workflow.`
+- `Use clojure-fullstack-skill to implement shared .cljc API contracts for backend, web, and mobile.`
+
+## About `clojure-fullstack-skill`
+
+This skill is intended for agent-assisted development work across backend, frontend, shared contracts, and mobile in a Clojure-centric stack. It emphasizes:
+
+- inspecting the real project before proposing code
+- respecting `AGENTS.md` instructions
+- keeping boundaries clear across backend, web, shared, and mobile
+- using practical full-stack delivery patterns for business applications
 
 ## Repository layout
 
