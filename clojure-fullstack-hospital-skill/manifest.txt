@@ -1,0 +1,8 @@
+SKILL.md
+references/agents-md-playbook.md
+references/backend-kit-patterns.md
+references/frontend-antd-reagent-patterns.md
+references/mobile-clojuredart-patterns.md
+references/shared-api-contracts.md
+references/security-testing-checklist.md
+examples/prompt-examples.md
