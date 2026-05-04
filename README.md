@@ -2,6 +2,14 @@
 
 A small repository of reusable Clojure-oriented agent skills.
 
+## Install
+
+Add this skill repository with:
+
+```sh
+npx skills@latest add zhaoyul/clojure-skills
+```
+
 ## Included skill
 
 ### `clojure-fullstack-skill`
