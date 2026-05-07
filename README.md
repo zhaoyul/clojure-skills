@@ -5,20 +5,35 @@ A repository of reusable Clojure-oriented agent skills.
 
 ## 安装 / Install
 
-使用下面的命令安装这个 skills 仓库：
-
-Install this skills repository with:
+### 安装整个仓库（所有 skills）
 
 ```sh
 npx skills@latest add zhaoyul/clojure-skills
 ```
 
-安装后，仓库中的 skills 会被加入到你的本地 skills 环境中。  
-After installation, the skills in this repository become available in your local skills environment.
+### 单独安装某个 skill
 
-## 当前包含的 skill / Included skill
+```sh
+# Clojure REPL 评估工具
+npx skills@latest add zhaoyul/clojure-skills --skill clojure-repl-eval
 
-- `clojure-fullstack-skill`
+# 括号修复工具
+npx skills@latest add zhaoyul/clojure-skills --skill clj-paren-repair
+
+# 全栈开发 skill
+npx skills@latest add zhaoyul/clojure-skills --skill clojure-fullstack-skill
+```
+
+安装后，skills 会被加入到你的本地 skills 环境中。  
+After installation, the skills become available in your local skills environment.
+
+## 当前包含的 skills / Included skills
+
+| Skill | Description |
+|---|---|
+| `clojure-fullstack-skill` | 面向 Kit + Reagent + ClojureDart 全栈项目的开发 skill |
+| `clojure-repl-eval` | 通过 nREPL 评估 Clojure 代码，验证编译、测试函数 |
+| `clj-paren-repair` | 修复 Clojure/ClojureDart 括号不匹配问题，自动格式化 |
 
 ## `clojure-fullstack-skill`
 
@@ -35,12 +50,38 @@ This is a full-stack Clojure development skill for projects that combine:
 它适合后端、前端、共享契约、移动端协同开发，也适合做架构检查、代码生成、重构、测试与调试。  
 It is useful for backend, frontend, shared-contract, and mobile work, as well as architecture review, code generation, refactoring, testing, and debugging.
 
-## 使用示例 / Example prompts
+### 使用示例 / Example prompts
 
 - `Use the clojure-fullstack-skill to scaffold a new Kit + Reagent + ClojureDart app.`
 - `Use clojure-fullstack-skill to add a patient search page with a Kit API and Reagent frontend.`
 - `Use clojure-fullstack-skill to review this full-stack Clojure codebase and suggest a safer AGENTS.md workflow.`
 - `Use clojure-fullstack-skill to implement shared .cljc API contracts for backend, web, and mobile.`
+
+## `clojure-repl-eval`
+
+通过 nREPL 评估 Clojure 代码的 skill。适合：
+
+- 验证编辑后的文件是否能编译
+- 交互式测试函数行为
+- 调试代码
+- 在提交前验证改动
+
+### 使用示例 / Example prompts
+
+- `Use clojure-repl-eval to test if my namespace compiles.`
+- `Use clojure-repl-eval to discover nREPL ports and evaluate expressions.`
+
+## `clj-paren-repair`
+
+修复 Clojure/ClojureDart 括号不匹配问题的 skill。适合：
+
+- 编译失败时的 delimiter 错误修复
+- 跳出 "Paren Edit Death Loop"
+- 大量编辑后的快速格式化
+
+### 使用示例 / Example prompts
+
+- `Use clj-paren-repair to fix the delimiter error in src/core.clj.`
 
 ## 仓库结构 / Repository layout
 
@@ -51,6 +92,12 @@ clojure-fullstack-skill/
   manifest.txt
   examples/
   references/
+
+clojure-repl-eval/
+  SKILL.md
+
+clj-paren-repair/
+  SKILL.md
 ```
 
 ## 说明 / Notes
