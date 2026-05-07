@@ -97,6 +97,33 @@ For dynamic search with many optional filters, use the project's existing query 
 
 Business transactions belong in service/domain code. Controllers should not open transactions unless the project explicitly uses that pattern.
 
+## Realtime and cross-client updates
+
+When a workflow spans multiple clients, broadcast after the database save succeeds. Typical events:
+
+- A source user creates work for another user, such as quote request creation.
+- A counterpart responds, such as driver quote submitted.
+- A payment or approval unlocks the next party's action.
+- An order/status transition changes what another client should display.
+
+Keep broadcasts small and non-sensitive: ids, status, event name, and coarse metadata. Do not put raw addresses, phone numbers, identity documents, payment account data, or message bodies in realtime payloads unless the product explicitly requires it and the channel is authorized.
+
+Add lightweight observability for development:
+
+```clojure
+(log/info "websocket-broadcast"
+          {:topic topic
+           :event event
+           :subscribers subscriber-count})
+```
+
+A local stats endpoint or REPL helper that returns topic subscriber counts is useful for distinguishing these cases:
+
+- The backend did not broadcast.
+- The app did not subscribe.
+- The app received the event but refreshed the wrong entity.
+- The app refreshed correctly but the backend state transition failed.
+
 ## Sensitive logging rule
 
 Safe:

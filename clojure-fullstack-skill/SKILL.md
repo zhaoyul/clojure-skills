@@ -19,6 +19,27 @@ The default architecture is:
 
 This skill is optimized for clinic, scheduling, medical record, operations, admin-dashboard, and other business systems.
 
+## ClojureDart Flutter Workflow
+
+For day-to-day mobile UI development, prefer the ClojureDart Flutter runner over one-off compile/build loops:
+
+```sh
+clj -M:cljd flutter -d chrome
+clj -M:cljd flutter -d macos
+```
+
+`-d <device>` selects the Flutter device and starts the long-running watch/hot-reload workflow. Keep it running while editing `.cljd` files. Use explicit devices such as `chrome` or `macos` when Flutter reports multiple connected devices.
+
+Use one-off commands for verification or release builds:
+
+```sh
+clj -M:cljd compile
+flutter build web --no-pub
+flutter build macos --debug --no-pub
+```
+
+When both a ClojureDart compile and a Flutter build are needed, run them sequentially so Flutter does not build stale generated Dart output.
+
 ## Prime Directive
 
 Before proposing architecture or code, inspect the actual project files when available. Do not invent namespaces, routes, aliases, database libraries, antd wrapper APIs, or ClojureDart setup.
