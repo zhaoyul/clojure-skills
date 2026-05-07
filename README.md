@@ -17,6 +17,9 @@ npx skills@latest add zhaoyul/clojure-skills
 # Clojure REPL 评估工具
 npx skills@latest add zhaoyul/clojure-skills --skill clojure-repl-eval
 
+# 结构化编辑工具
+npx skills@latest add zhaoyul/clojure-skills --skill clojure-struct-edit
+
 # 括号修复工具
 npx skills@latest add zhaoyul/clojure-skills --skill clj-paren-repair
 
@@ -32,6 +35,7 @@ After installation, the skills become available in your local skills environment
 | Skill | Description |
 |---|---|
 | `clojure-fullstack-skill` | 面向 Kit + Reagent + ClojureDart 全栈项目的开发 skill |
+| `clojure-struct-edit` | 结构化编辑 Clojure 代码，原子操作 + 括号验证 + diff 预览 |
 | `clojure-repl-eval` | 通过 nREPL 评估 Clojure 代码，验证编译、测试函数 |
 | `clj-paren-repair` | 修复 Clojure/ClojureDart 括号不匹配问题，自动格式化 |
 
@@ -56,6 +60,33 @@ It is useful for backend, frontend, shared-contract, and mobile work, as well as
 - `Use clojure-fullstack-skill to add a patient search page with a Kit API and Reagent frontend.`
 - `Use clojure-fullstack-skill to review this full-stack Clojure codebase and suggest a safer AGENTS.md workflow.`
 - `Use clojure-fullstack-skill to implement shared .cljc API contracts for backend, web, and mobile.`
+
+## `clojure-struct-edit`
+
+通过 Emacs 结构化编辑安全地修改 Clojure 代码的 skill. 核心设计原则:
+
+- **禁止原始文本 patch**: LLM 只输出 JSON 操作指令, 真正的括号操作由 Emacs dispatcher 完成
+- **原子事务**: 所有编辑在 `atomic-change-group` 内执行, 失败自动回滚
+- **强制验证**: 每次编辑后自动运行 `check-parens`
+- **diff 预览**: 先 `save: false` 预览, 确认后再 `save: true` 保存
+
+### 支持的操作 (Phase 1)
+
+| 操作 | 说明 |
+|---|---|
+| `snapshot` | 查看文件结构, 获取所有顶层 form 的行号/列号/SHA256 |
+| `get-form` | 读取指定 form 的完整文本 |
+| `replace-form` | 替换完整 form |
+| `insert-form-after` | 在 form 后插入 |
+| `insert-form-before` | 在 form 前插入 |
+| `remove-form` | 删除完整 form |
+| `validate` | 验证文件括号平衡 |
+
+### 使用示例 / Example prompts
+
+- `Use clojure-struct-edit to snapshot src/app/core.clj and list all defn forms.`
+- `Use clojure-struct-edit to replace the handler function in src/app/core.clj with a new implementation.`
+- `Use clojure-struct-edit to add a private helper function after the current handler.`
 
 ## `clojure-repl-eval`
 
@@ -92,6 +123,9 @@ clojure-fullstack-skill/
   manifest.txt
   examples/
   references/
+
+clojure-struct-edit/
+  SKILL.md
 
 clojure-repl-eval/
   SKILL.md
