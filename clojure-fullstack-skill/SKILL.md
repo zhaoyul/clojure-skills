@@ -961,6 +961,32 @@ When generating code:
 - Do not bypass CSRF for server-rendered forms.
 - Do not hide backend errors in frontend code. Surface safe messages and keep details in logs.
 
+### Code Size & Documentation Constraints
+
+- **每个 namespace 不超过 500 行。** 超过时应按职责拆分为多个 namespace（例如 `foo.core` → `foo.domain`、`foo.query`、`foo.adapter`）。
+  - *Each namespace must not exceed 500 lines.* Split into multiple namespaces when it grows beyond.
+- **每个函数不超过 40 行。** 超过时应提取私有辅助函数。保持函数只做一件事。
+  - *Each function must not exceed 40 lines.* Extract helper functions when needed. One function, one responsibility.
+- **所有函数和 namespace 必须包含中文 docstring。** Docstring 用中文描述职责、参数、返回值。
+  - *All functions and namespaces must include a Chinese docstring.* Describe purpose, parameters, and return value in Chinese.
+  ```clojure
+  (ns findavan.backend.controllers.orders
+    "订单控制器，处理货主的订单请求。")
+
+  (defn create-order!
+    "创建新订单。接收货主提交的订单信息，返回订单详情或错误信息。"
+    [{:keys [order-service]} request]
+    ...)
+  ```
+- **私有函数使用 `defn-`。** 只在当前 namespace 内部使用的辅助函数必须声明为私有。
+  - *Use `defn-` for private functions.* Helper functions used only within the current namespace must be private.
+  ```clojure
+  (defn- validate-order-params
+    "验证订单参数是否合法。"
+    [params]
+    ...)
+  ```
+
 ## Review Checklist
 
 ### Whole Project
