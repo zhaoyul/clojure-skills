@@ -12,7 +12,7 @@ Act as a careful Clojure full-stack pair programmer for real-world business syst
 The default architecture is:
 
 - Backend: Kit framework, Integrant, Aero, Reitit or the project's existing router, Ring, SQL, Migratus, HugSQL or the project's existing query layer.
-- Web frontend: ClojureScript, Reagent, Ant Design, and the existing antd wrapper style used by the project.
+- Web frontend: ClojureScript, **Reagent 2.x**, **React 19**, **Ant Design 6**, and the existing antd wrapper style used by the project.
 - Shared contracts: `.cljc` namespaces for schemas, enums, permissions, validation helpers, and DTO transformations where useful.
 - Mobile: ClojureDart and Flutter, with `.cljd` business UI in `src/` and Dart or Flutter bridge code in `lib/` only where needed.
 - Development style: inspect first, respect `AGENTS.md`, keep modules small, use REPL-driven workflow, generate complete code when asked.
@@ -501,6 +501,67 @@ Follow the project. If no shape exists, use a simple consistent map:
 ```
 
 Do not leak stack traces, SQL, tokens, or patient details into client responses.
+
+## Modern Frontend Stack: Reagent 2.x + React 19 + Ant Design 6
+
+**版本锁定 (Version Pinning):**
+- **Reagent**: `2.0.1` 或更高 — 支持 React 19 和 hooks API.
+- **React / ReactDOM**: `19.2.3` 或更高 — 必须使用 `createRoot` API, `ReactDOM.render` 已移除.
+- **Ant Design (antd)**: `6.3.7` 或更高 — 使用 npm 包直接导入, 不再使用 cljsjs/antd 或 antizer.
+- **@ant-design/icons**: 与 antd 6 匹配的版本.
+
+**React 19 Bootstrap (createRoot):**
+- 入口文件 (`app.cljs` / `core.cljs`) 必须使用 `reagent.dom.client` 的 `create-root`, 并启用 `:function-components` 编译器:
+  ```clojure
+  (:require [reagent.core :as r]
+            [reagent.dom.client :as rdc])
+
+  (defonce root (atom nil))
+
+  (defn init []
+    ;; 必须启用函数组件编译器, 否则 hooks 无法在 defn 组件中正常工作
+    (r/set-default-compiler! (r/create-compiler {:function-components true}))
+    (let [container (.getElementById js/document "app")]
+      (reset! root (rdc/create-root container))
+      (rdc/render @root [app])))
+  ```
+- 不要调用已废弃的 `reagent.dom/render`, 也不要直接用 `"react-dom/client"`.
+
+**函数组件优先 (Function Components First):**
+- **默认使用 `defn` 定义函数组件**, 返回 hiccup 向量.
+- **`r/create-class` 仅在以下情况使用**: 需要复杂的 `component-did-update` / `should-component-update` / `component-will-unmount` 生命周期逻辑, 且无法通过 hooks 表达.
+- **必须启用 `:function-components` 编译器选项**: Reagent 2.0.1 默认使用类组件编译器 (`class-compiler`), 如果不启用此选项, `defn` 会被包装为 React 类组件, 导致 hooks 调用报 "Invalid hook call" 错误. 在应用初始化时必须设置:
+  ```clojure
+  (r/set-default-compiler! (r/create-compiler {:function-components true}))
+  ```
+- **数据加载使用 `reagent.hooks/use-effect` 替代 `component-did-mount`**:
+  ```clojure
+  (:require [reagent.hooks :as hooks])
+
+  (defn page []
+    (hooks/use-effect (fn []
+                    (rf/dispatch [:orders/load])
+                    js/undefined) ; cleanup
+                  []) ; empty deps = mount-only
+    (let [items @(rf/subscribe [:orders/items])]
+      [:> Card ...]))
+  ```
+
+**Reagent Hooks API (`reagent.hooks` 命名空间):**
+- `hooks/use-state` — 本地状态 (替代局部 r/atom).
+- `hooks/use-effect` — 副作用 (替代 component-did-mount/update/unmount).
+- `hooks/use-memo` — 计算缓存.
+- `hooks/use-ref` — DOM 引用或可变容器.
+- `hooks/use-callback` — 回调缓存.
+- `hooks/use-context` — React context.
+- **Hooks 只能在函数组件顶层调用**, 不能在循环、条件或嵌套函数中调用.
+
+**Ant Design 6 注意事项:**
+- `Modal` / `Drawer` 的 `destroyOnClose` prop 已改为 `destroyOnHidden`.
+- `Select` 的 `dropdownMatchSelectWidth` 已改为 `popupMatchSelectWidth`.
+- 日期相关组件使用 dayjs (AntD 6 内置), 不再需要 moment.js.
+- `Form.create()` 和 `getFieldDecorator` 已被 `Form` + `useForm` hook 替代.
+- 组件 ref 在 React 19 中作为普通 prop 传递, 不再需要 `React.forwardRef`.
 
 ## Web Frontend Rules: Ant Design Plus Reagent
 
