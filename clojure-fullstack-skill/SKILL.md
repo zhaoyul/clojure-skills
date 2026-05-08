@@ -21,7 +21,9 @@ This skill is optimized for clinic, scheduling, medical record, operations, admi
 
 ## ClojureDart Flutter Workflow
 
-For day-to-day mobile UI development, prefer the ClojureDart Flutter runner over one-off compile/build loops:
+### 交互式开发 (前台运行)
+
+For day-to-day mobile UI development, prefer the ClojureDart Flutter runner:
 
 ```sh
 clj -M:cljd flutter -d chrome
@@ -29,6 +31,46 @@ clj -M:cljd flutter -d macos
 ```
 
 `-d <device>` selects the Flutter device and starts the long-running watch/hot-reload workflow. Keep it running while editing `.cljd` files. Use explicit devices such as `chrome` or `macos` when Flutter reports multiple connected devices.
+
+### 后台守护开发模式 (推荐用于 AI 代理)
+
+When an AI agent is editing `.cljd` files, the interactive `clj -M:cljd flutter` blocks stdin. Prefer the **daemon workflow** for faster response:
+
+```sh
+# 1. 启动后台 flutter run 进程
+scripts/cljd-daemon start shipper   # or driver
+
+# 2. 持续 tail 日志 (随时查看错误)
+scripts/cljd-daemon logs shipper
+
+# 3. 修改代码后编译 + 热重载
+clj -M:cljd compile
+scripts/cljd-daemon reload shipper   # 发送 SIGUSR1 触发 Hot Reload
+
+# 4. 查看全部状态
+scripts/cljd-daemon status
+
+# 5. 停止
+scripts/cljd-daemon stop shipper
+```
+
+**cljd-daemon 命令:**
+
+| 命令 | 说明 |
+|------|------|
+| `start <target>` | 编译并后台启动 flutter run |
+| `stop <target>` | 停止后台进程 |
+| `reload <target>` | 发送 SIGUSR1 触发热重载 |
+| `restart <target>` | 停止 + 启动 |
+| `status` | 查看所有进程和 VM Service URL |
+| `logs <target>` | `tail -f` 持续查看日志 |
+| `compile <target>` | 仅编译 |
+
+**实现原理:**
+- `clj -M:cljd compile` 编译 `.cljd` → `.dart`
+- `nohup flutter run -d macos --no-pub > /tmp/<target>-flutter.log 2>&1 &` 后台运行
+- `kill -USR1 <pid>` 触发 Flutter Hot Reload (flutter_tools 原生支持)
+- 通过 `lsof` 和日志端口检测进程状态
 
 Use one-off commands for verification or release builds:
 
@@ -399,6 +441,34 @@ CREATE INDEX appointments_doctor_id_starts_at_idx ON appointments (doctor_id, st
 DROP TABLE IF EXISTS appointments;
 ```
 
+### HugSQL SQL File Rules
+
+**所有 SQL 查询必须提取到 `.sql` 文件, 使用 HugSQL 管理.** 禁止在 Clojure 代码中直接内联 SQL 字符串.
+
+- SQL 文件放在 `resources/sql/` 目录下, 按领域命名: `orders.sql`, `users.sql`, `finance.sql` 等.
+- 每个 `.sql` 文件不超过 200 行, 超过时按子领域拆分.
+- 使用 HugSQL 注释语法定义查询:
+  ```sql
+  -- :name list-orders :? :*
+  -- :doc 获取订单列表
+  SELECT * FROM orders WHERE status = :status ORDER BY created_at DESC LIMIT :limit
+  ```
+- 命名约定: `list-*` 查询列表, `find-*-by-id` 根据ID查询, `create-*!` 插入, `update-*!` 更新, `delete-*!` 删除.
+- DTO 转换保留在 Clojure 中, SQL 只返回原始行数据.
+- 动态 WHERE 条件使用 HugSQL snippet 或在 Clojure 层拼接, 不要在 SQL 中写复杂逻辑.
+
+**Repository 拆分规范:**
+- 原 `repositories/sql.clj` 超过 500 行时必须按领域拆分为 `repositories/sql/*.clj`.
+- 每个子文件只实现一个 Protocol, 如 `sql/orders.clj` 实现 `OrderRepository`.
+- 公共 DTO 转换函数放在 `sql/core.clj` 中共享.
+- 聚合入口 `sql.clj` 引入所有子模块并提供 `new-repositories` 工厂函数.
+
+**HugSQL 适配器设计 (用于测试):**
+- 自定义 HugSQL 适配器 `CoreAdapter` 继承 `hugsql-adapter-next-jdbc`.
+- 适配器的 `execute` 和 `query` 方法路由到 `core/select!` / `core/select-one!`.
+- 这样测试可以通过 `with-redefs [sql-core/select! ...]` 来 mock 所有 HugSQL 查询.
+- 动态查询（复杂 WHERE 拼接）直接使用 `jdbc/execute!`, 测试时 mock `jdbc/execute!`.
+
 For HugSQL:
 
 ```sql
@@ -492,12 +562,64 @@ If the build uses advanced compilation, check whether direct named imports and p
 
 ### Reagent State Rules
 
+**前端必须使用 re-frame 管理状态.** 禁止在每个页面使用独立的 `reagent.core/atom` 管理全局状态.
+
+- 所有页面共享同一个 `re-frame.db/app-db`, 按领域分区: `:orders`, `:users`, `:finance` 等.
+- 每个领域包含 `:loading?`, `:items`/`:data`, `:error`, `:filters` 等标准字段.
+- 状态修改只能通过 `re-frame.core/reg-event-db` 和 `re-frame.core/reg-event-fx` 定义的事件.
+- 数据读取通过 `re-frame.core/reg-sub` 定义的订阅, 页面组件使用 `@(rf/subscribe [:key])` 获取数据.
+- API 调用封装在 `reg-fx` 效果处理器中, 不要在 render 函数中直接发起 HTTP 请求.
+- 页面导航通过 `[:navigate "page-name"]` 事件, 不使用独立的 `page*` atom.
+
+**re-frame 文件结构:**
+
+```text
+admin/src/findavan/admin/
+  db.cljs      - app-db 初始状态和 schema
+  events.cljs  - 所有事件处理器 (reg-event-db / reg-event-fx)
+  subs.cljs    - 所有订阅定义 (reg-sub)
+  fx.cljs      - 副作用效果处理器 (reg-fx), 如 API 调用
+```
+
+**状态设计示例:**
+
+```clojure
+;; db.cljs
+(def default-db
+  {:page "dashboard"
+   :auth {:user nil :token nil :loading? false}
+   :orders {:loading? false :items [] :filters {} :selected nil}
+   :users {:loading? false :items []}})
+
+;; events.cljs
+(rf/reg-event-db :navigate (fn [db [_ page]] (assoc db :page page)))
+(rf/reg-event-fx :api/fetch-orders
+  (fn [_ _]
+    {:db (assoc-in default-db [:orders :loading?] true)
+     :api {:url "/api/orders" :method :get
+           :on-success [:orders/fetch-success]
+           :on-failure [:orders/fetch-failure]}}))
+
+;; subs.cljs
+(rf/reg-sub :page (fn [db _] (:page db)))
+(rf/reg-sub :orders (fn [db _] (:orders db)))
+
+;; page.cljs
+(defn page []
+  (let [orders @(rf/subscribe [:orders])]
+    [antd/table {:dataSource (:items orders)}]))
+```
+
+**re-frame ClojureScript 注意事项:**
+- `rf/reg-fx`, `rf/reg-event-db`, `rf/reg-sub`, `rf/reg-event-fx` 在 ClojureScript 中**不支持 docstring**参数（与 Clojure 不同）.
+- 如果传入3个参数（id + docstring + fn），编译会报 `Wrong number of args` 警告.
+- 文档写在 namespace docstring 或注释中，不要放在注册函数里.
+
 - Keep API-loaded page state in one local atom or the existing event-store pattern.
 - Keep antd form-local state inside Form when possible.
 - Use explicit loading, error, and data states.
 - Do not call APIs directly from render without guard logic.
 - Do not mutate nested state with ad-hoc JS objects. Convert at the boundary.
-- If the project uses re-frame, kee-frame, re-dash, or a custom event system, follow it instead of introducing a competing state layer.
 
 ### Web API Client Rule
 
