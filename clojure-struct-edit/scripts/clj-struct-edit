@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# clj-struct-edit - CLI wrapper for safe Clojure structural editing
+# Usage: echo '{"op":"snapshot","file":"src/app.clj"}' | clj-struct-edit
+#
+# Phase 2: Babashka + rewrite-clj (default)
+#   snapshot, get-form, replace-form, insert-form-after,
+#   insert-form-before, remove-form, wrap-form, splice-form,
+#   add-require, validate
+#
+# Phase 1 (Emacs fallback, set CLJ_STRUCT_EDIT_PHASE=1):
+#   snapshot, get-form, replace-form, insert-form-after,
+#   insert-form-before, remove-form, validate
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PHASE="${CLJ_STRUCT_EDIT_PHASE:-2}"
+
+# Read JSON from stdin
+INPUT_JSON="$(mktemp -t clj-struct-edit-in.XXXXXX.json)"
+cat > "$INPUT_JSON"
+
+# Validate JSON is not empty
+if [ ! -s "$INPUT_JSON" ]; then
+  echo '{"ok":false,"error":"Empty input: expected JSON operation on stdin"}' >&2
+  rm -f "$INPUT_JSON"
+  exit 1
+fi
+
+if [ "$PHASE" = "2" ]; then
+  # Phase 2: Babashka
+  cd "${SCRIPT_DIR}/struct-edit-v2"
+  bb main.clj < "$INPUT_JSON"
+else
+  # Phase 1: Emacs
+  ELISP_FILE="${SCRIPT_DIR}/llm-clj-edit.el"
+  OUTPUT_JSON="$(mktemp -t clj-struct-edit-out.XXXXXX.json)"
+  PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+
+  RESULT=$(emacsclient -a "" \
+    --eval "
+      (progn
+        (setq llm-clj-edit-project-root "${PROJECT_ROOT}")
+        (load-file "${ELISP_FILE}")
+        (llm-clj-edit-apply-file "${INPUT_JSON}" "${OUTPUT_JSON}"))
+  " 2>/dev/null)
+
+  cat "$OUTPUT_JSON"
+  rm -f "$OUTPUT_JSON"
+fi
+
+rm -f "$INPUT_JSON"

@@ -40,13 +40,17 @@ Use this skill whenever editing Clojure, ClojureScript, ClojureDart, or EDN code
 
 ## Tool: clj-struct-edit
 
-### Installation
+The script is at `scripts/clj-struct-edit` — resolve relative to this skill's directory.
 
-The tool requires:
-- Emacs with `emacsclient` (install via `brew install emacs` or `apt install emacs`)
-- `clojure-mode` or `clojure-ts-mode` in Emacs (optional but recommended)
+### Requirements
 
-The tool is at `scripts/clj-struct-edit` in the project. If missing, the skill will guide setup.
+**Phase 2 (default):**
+- [Babashka](https://babashka.org/) (`brew install babashka`)
+- No Emacs needed
+
+**Phase 1 (Emacs fallback, set `CLJ_STRUCT_EDIT_PHASE=1`):**
+- Emacs with `emacsclient` (`brew install emacs`)
+- `clojure-mode` or `clojure-ts-mode` (optional but recommended)
 
 ### Usage
 
@@ -58,193 +62,130 @@ echo '{"op":"snapshot","file":"src/app.clj"}' | scripts/clj-struct-edit
 cat op.json | scripts/clj-struct-edit
 ```
 
-### Operations
+**Note:** `scripts/clj-struct-edit` is relative to the skill directory. In a pi agent session, this resolves automatically. For standalone use, prefix with the skill path or set an alias:
+```bash
+SKILL_DIR="$(dirname $(dirname $(readlink -f $0)))"
+$SKILL_DIR/scripts/clj-struct-edit <<< '...'
+```
+
+## Operations Reference
+
+### Phase 1 + Phase 2 (Core)
+
+| op | Phase | Description | Emacs | BB |
+|----|-------|-------------|:-----:|:--:|
+| `snapshot` | 1 | Scan top-level forms, return range + sha256 | ✅ | ✅ |
+| `get-form` | 1 | Read exact text of a form at target range | ✅ | ✅ |
+| `replace-form` | 1 | Replace a complete form (with sha256 verify) | ✅ | ✅ |
+| `insert-form-after` | 1 | Insert a form after the target form | ✅ | ✅ |
+| `insert-form-before` | 1 | Insert a form before the target form | ✅ | ✅ |
+| `remove-form` | 1 | Remove a complete form | ✅ | ✅ |
+| `validate` | 1 | Run check-parens on file | ✅ | ✅ |
+
+### Phase 2 Only (Babashka + rewrite-clj)
+
+| op | Description |
+|----|-------------|
+| `wrap-form` | Wrap a form with a wrapper s-expression |
+| `splice-form` | Splice/unwrap a form (remove outer wrapper) |
+| `add-require` | Add a `:require` entry to the ns form |
+| `rename-symbol` | LSP-based symbol rename across the project |
+| `clean-ns` | LSP-based ns cleanup (remove unused requires) |
+| `find-references` | LSP-based find all references to a symbol |
+
+### Detail: Core Operations
 
 #### snapshot
-
-Return top-level forms with ranges and SHA256 hashes.
-
 ```json
-{
-  "op": "snapshot",
-  "file": "src/app.clj",
-  "save": false
-}
+{"op":"snapshot","file":"src/app.clj","save":false}
 ```
-
-Returns:
-```json
-{
-  "ok": true,
-  "forms": [
-    {
-      "index": 1,
-      "kind": "ns",
-      "head": "ns",
-      "range": [[1,1],[8,2]],
-      "preview": "(ns my.app.core ...)",
-      "sha256": "abc123..."
-    },
-    {
-      "index": 2,
-      "kind": "def",
-      "head": "defn",
-      "range": [[10,1],[25,2]],
-      "preview": "(defn handler [request] ...)",
-      "sha256": "def456..."
-    }
-  ],
-  "file": "src/app.clj",
-  "line_count": 123
-}
-```
+Returns list of top-level forms with index, kind, head, range [[l1,c1],[l2,c2]], preview, sha256.
 
 #### get-form
-
-Read exact text of a form at target range.
-
 ```json
-{
-  "op": "get-form",
-  "file": "src/app.clj",
-  "target": {
-    "range": [[10,1],[25,2]]
-  },
-  "save": false
-}
+{"op":"get-form","file":"src/app.clj","target":{"range":[[10,1],[25,2]]},"save":false}
 ```
-
-Returns:
-```json
-{
-  "ok": true,
-  "text": "(defn handler [request] ...)",
-  "range": [[10,1],[25,2]],
-  "sha256": "def456..."
-}
-```
+Returns the exact sexp text, range, and sha256.
 
 #### replace-form
-
-Replace a complete form. **Must use `save: false` first!**
-
 ```json
-{
-  "op": "replace-form",
-  "file": "src/app.clj",
-  "target": {
-    "range": [[10,1],[25,2]],
-    "sha256": "def456..."
-  },
-  "new_form": "(defn handler [request]\n  (assoc response :status 200))",
-  "save": false
-}
+{"op":"replace-form","file":"src/app.clj","target":{"range":[[10,1],[25,2]],"sha256":"def456..."},"new_form":"(defn handler [request]\n  (assoc response :status 200))","save":false}
 ```
+**Must dry-run with `save: false` first!** Returns old_sha256, new_sha256, range.
 
-Returns:
+#### insert-form-after / insert-form-before
 ```json
-{
-  "ok": true,
-  "changed": true,
-  "old_sha256": "def456...",
-  "new_sha256": "ghi789...",
-  "range": [[10,1],[11,30]],
-  "dry_run": true
-}
+{"op":"insert-form-after","file":"src/app.clj","target":{"range":[[10,1],[25,2]]},"new_form":"(defn- helper [] nil)","save":false}
 ```
-
-#### insert-form-after
-
-Insert a form after the target form.
-
-```json
-{
-  "op": "insert-form-after",
-  "file": "src/app.clj",
-  "target": {
-    "range": [[10,1],[25,2]]
-  },
-  "new_form": "(defn- helper [] nil)",
-  "save": false
-}
-```
-
-#### insert-form-before
-
-Insert a form before the target form.
-
-```json
-{
-  "op": "insert-form-before",
-  "file": "src/app.clj",
-  "target": {
-    "range": [[10,1],[25,2]]
-  },
-  "new_form": "(def ^:private config {})",
-  "save": false
-}
-```
+Inserts at same indentation level as target.
 
 #### remove-form
-
-Remove a complete form.
-
 ```json
-{
-  "op": "remove-form",
-  "file": "src/app.clj",
-  "target": {
-    "range": [[10,1],[25,2]],
-    "sha256": "def456..."
-  },
-  "save": false
-}
+{"op":"remove-form","file":"src/app.clj","target":{"range":[[10,1],[25,2]],"sha256":"def456..."},"save":false}
 ```
+Removes the form and trailing whitespace.
 
 #### validate
-
-Run check-parens on file without modifying.
-
 ```json
-{
-  "op": "validate",
-  "file": "src/app.clj",
-  "save": false
-}
+{"op":"validate","file":"src/app.clj","save":false}
 ```
-
-Returns:
-```json
-{
-  "ok": true,
-  "check_parens": "ok",
-  "file": "src/app.clj"
-}
-```
+Returns `{"ok":true,"check_parens":"ok"}` or error.
 
 ## Example Edit Session
 
 ```bash
 # Step 1: Inspect file structure
-echo '{"op":"snapshot","file":"src/app/core.clj","save":false}' | scripts/clj-struct-edit
+scripts/clj-struct-edit <<< '{"op":"snapshot","file":"src/app/core.clj","save":false}'
 
 # Step 2: Dry-run replace
-echo '{
-  "op": "replace-form",
-  "file": "src/app/core.clj",
-  "target": {"range":[[12,3],[12,30]],"sha256":"old-hash"},
-  "new_form": "(assoc response :status 200)",
-  "save": false
-}' | scripts/clj-struct-edit
+scripts/clj-struct-edit <<< '{"op":"replace-form","file":"src/app/core.clj","target":{"range":[[12,3],[12,30]],"sha256":"old-hash"},"new_form":"(assoc response :status 200)","save":false}'
 
 # Step 3: If ok, save
-echo '{
-  "op": "replace-form",
-  "file": "src/app/core.clj",
-  "target": {"range":[[12,3],[12,30]],"sha256":"old-hash"},
-  "new_form": "(assoc response :status 200)",
-  "save": true
-}' | scripts/clj-struct-edit
+scripts/clj-struct-edit <<< '{"op":"replace-form","file":"src/app/core.clj","target":{"range":[[12,3],[12,30]],"sha256":"old-hash"},"new_form":"(assoc response :status 200)","save":true}'
+```
+
+## Phase 2 Only Operations
+
+### wrap-form
+Wrap a target form with a wrapper s-expression. `wrapper` is the outer form template with `%s` placeholder.
+
+```json
+{"op":"wrap-form","file":"src/core.clj","target":{"range":[[10,1],[10,15]],"sha256":"..."},"wrapper":"(when debug %s)","save":true}
+```
+
+### splice-form
+Remove the outer wrapper, keeping the inner contents.
+
+```json
+{"op":"splice-form","file":"src/core.clj","target":{"range":[[10,1],[12,2]],"sha256":"..."},"save":true}
+```
+
+### add-require
+Add a require entry to the ns form.
+
+```json
+{"op":"add-require","file":"src/core.clj","require":"[clojure.string :as str]","save":true}
+```
+
+### rename-symbol (LSP)
+Requires clojure-lsp running. Renames symbol across the project.
+
+```json
+{"op":"rename-symbol","file":"src/core.clj","namespace":"my.app.core","symbol":"old-name","new_name":"new-name","save":true}
+```
+
+### clean-ns (LSP)
+Remove unused requires via clojure-lsp.
+
+```json
+{"op":"clean-ns","file":"src/core.clj","save":true}
+```
+
+### find-references (LSP)
+Find all references to a symbol.
+
+```json
+{"op":"find-references","file":"src/core.clj","namespace":"my.app.core","symbol":"my-fn","save":false}
 ```
 
 ## Safety Guarantees
@@ -281,17 +222,9 @@ echo '{
 }
 ```
 
-## Phase 1 Limitations
+## Limitations
 
 - Target uses `range` (line/col) only. No stable `node_id` yet.
-- No `add-require`, `wrap-form`, `splice-form` yet.
-- No `clj-kondo` integration yet (only `check-parens`).
+- Phase 2 (Babashka+rewrite-clj) is recommended. Phase 1 (Emacs) still available as fallback via `CLJ_STRUCT_EDIT_PHASE=1`.
 - ClojureDart `.method` interop syntax may confuse sexp navigation.
-
-## Phase 2+ Roadmap
-
-- Stable `node_id` via rewrite-clj
-- `add-require`, `remove-require`
-- `wrap-form`, `splice-form`, `raise-form`
-- clj-kondo lint integration
-- `clean-ns`
+- `rename-symbol`, `clean-ns`, `find-references` require clojure-lsp running.
