@@ -25,6 +25,9 @@ npx skills@latest add zhaoyul/clojure-skills --skill clj-paren-repair
 
 # 全栈开发 skill
 npx skills@latest add zhaoyul/clojure-skills --skill clojure-fullstack-skill
+
+# 括号守卫（编辑前验证 + 格式化）
+npx skills@latest add zhaoyul/clojure-skills --skill clojure-bracket-guard
 ```
 
 安装后，skills 会被加入到你的本地 skills 环境中。  
@@ -38,6 +41,7 @@ After installation, the skills become available in your local skills environment
 | `clojure-struct-edit` | 结构化编辑 Clojure 代码，原子操作 + 括号验证 + diff 预览 |
 | `clojure-repl-eval` | 通过 nREPL 评估 Clojure 代码，验证编译、测试函数 |
 | `clj-paren-repair` | 修复 Clojure/ClojureDart 括号不匹配问题，自动格式化 |
+| `clojure-bracket-guard` | 编辑前验证括号平衡，支持 fuzzy matching、CRLF/BOM、clojure-lsp 格式化 |
 
 ## `clojure-fullstack-skill`
 
@@ -114,6 +118,31 @@ It is useful for backend, frontend, shared-contract, and mobile work, as well as
 
 - `Use clj-paren-repair to fix the delimiter error in src/core.clj.`
 
+## `clojure-bracket-guard`
+
+编辑 Clojure 代码时，在写入前验证括号平衡的 skill。是内置 edit 工具的安全替代。适合：
+
+- LLM 编辑 .clj/.cljs/.cljc/.cljd/.edn 文件时防止括号不匹配
+- 支持 fuzzy matching（智能引号、Unicode 破折号、特殊空格）
+- 支持 CRLF/BOM 透明处理
+- 可选的 clojure-lsp 格式化
+
+核心理念：把错误消灭在写入之前，而不是写入后修复。
+
+A safe replacement for built-in edit tools when editing Clojure code. Validates bracket balance before writing. Features:
+
+- Fuzzy matching (smart quotes, Unicode dashes, special spaces)
+- CRLF/BOM transparent handling
+- Optional clojure-lsp formatting
+- All edits matched against original file (pi-style semantics)
+
+Core idea: prevent bracket errors before writing, rather than fixing them after.
+
+### 使用示例 / Example prompts
+
+- `Use clojure-bracket-guard to edit src/core.clj — change the add function to accept 3 args.`
+- `Use clojure-bracket-guard to refactor the greet function and format the result.`
+
 ## 仓库结构 / Repository layout
 
 ```text
@@ -132,6 +161,12 @@ clojure-repl-eval/
 
 clj-paren-repair/
   SKILL.md
+
+clojure-bracket-guard/
+  SKILL.md
+  scripts/
+    validate.clj      # 括号验证
+    safe-edit.clj      # 安全编辑（替代内置 edit）
 ```
 
 ## 说明 / Notes
