@@ -27,8 +27,14 @@
 ;;   --dry-run          Only validate, don't write
 ;;   --sep <char>       Separator for --edit (default: ">")
 ;;   --format           Format file with clojure-lsp after editing
+;;   --target <node-id>  Parse file via rewrite-clj, find form at "row:col" position,
+;;                       and replace entire form with --new text.
+;;                       This avoids shell-encoding issues with special characters
+;;                       in --old, at the cost of replacing the whole enclosing form.
 
 (require '[rewrite-clj.parser :as p]
+         '[rewrite-clj.zip :as z]
+         '[rewrite-clj.node :as n]
          '[clojure.string :as str]
          '[babashka.fs :as fs]
          '[clojure.java.shell :refer [sh]])
@@ -47,9 +53,270 @@
         {:valid false
          :error (.getMessage e)}))))
 
-;; ============================================================
-;; Normalization (matching pi's edit tool behavior)
-;; ============================================================
+;; ─── AST-based target editing (bypasses shell-encoding issues in --old) ───
+
+(defn node-position
+  "Return [row col] of zipper node (1-based)."
+  [zloc]
+  (when zloc
+    (vec (z/position zloc))))
+
+(defn node-end-position
+  "Return [end-row end-col]."
+  [zloc]
+  (when zloc
+    (let [[[_ _] [er ec]] (z/position-span zloc)]
+      [er ec])))
+
+(defn find-zloc-by-position
+  "Find the deepest zloc at or containing [target-row target-col]."
+  [zloc [target-row target-col]]
+  (loop [z zloc]
+    (if-not z
+      nil
+      (let [[r c] (node-position z)
+            [er ec] (node-end-position z)]
+        (cond
+          ;; Exact match at start position
+          (and (= r target-row) (= c target-col))
+          z
+          ;; Target is before this node, skip right
+          (or (< target-row r)
+              (and (= target-row r) (< target-col c)))
+          (recur (z/right z))
+          ;; Target is after this node, skip right
+          (or (> target-row er)
+              (and (= target-row er) (> target-col ec)))
+          (recur (z/right z))
+          ;; Target is inside this node, go deeper
+          :else
+          (if-let [child (z/down z)]
+            (or (find-zloc-by-position child [target-row target-col])
+                z)
+            z))))))
+
+(defn node-text
+  "Get full text of the node at zloc."
+  [zloc]
+  (n/string (z/node zloc)))
+
+(defn replace-by-target
+  "Parse file, find form at node-id (\"row:col\"), replace it with new-form.
+   Returns {:old_text ... :new_text ... :old_range ...} or throws."
+  [content target-id new-form-text]
+  (let [[row col] (map parse-long (str/split target-id #":"))
+        zloc (z/of-string content {:track-position? true})
+        target-zloc (find-zloc-by-position zloc [row col])]
+    (when-not target-zloc
+      (throw (ex-info (str "Target not found at position " target-id) {})))
+    (let [old-text (node-text target-zloc)
+          new-node (p/parse-string-all new-form-text)
+          replaced (z/replace target-zloc new-node)
+          new-content (z/root-string replaced)]
+      {:old_text old-text
+       :new_text new-form-text
+       :old_range [(node-position target-zloc) (node-end-position target-zloc)]
+       :base-content content
+       :new-content new-content})))
+
+;; ─── Child operations (insert/remove/swap) ───
+
+(defn- list-children
+  "Get all child nodes of target as a vector."
+  [target-zloc]
+  (loop [c (z/down target-zloc) acc []]
+    (if c
+      (recur (z/right c) (conj acc (z/node c)))
+      acc)))
+
+(defn swap-children
+  "Swap two children at indices a and b within the target form.
+   Preserves original whitespace/formatting by using node positions.
+   Indices are 0-based (0 = defn, 1 = name, 2 = first arg, etc.)"
+  [content target-id idx-a idx-b]
+  (let [[row col] (map parse-long (str/split target-id #":"))
+        zloc (z/of-string content {:track-position? true})
+        target-zloc (find-zloc-by-position zloc [row col])]
+    (when-not target-zloc
+      (throw (ex-info (str "Target not found at " target-id) {})))
+    (let [old-text (node-text target-zloc)
+          a-min (min idx-a idx-b)
+          b-max (max idx-a idx-b)]
+      ;; Walk children to get their source positions
+      (let [child-data (loop [c (z/down target-zloc) idx 0 acc []]
+                         (if c
+                           (let [start-pos (z/position c)
+                                 end-pos (second (z/position-span c))
+                                 node (z/node c)]
+                             (recur (z/right c) (inc idx)
+                                    (conj acc {:node node
+                                               :start start-pos
+                                               :end end-pos
+                                               :text (n/string node)
+                                               :idx idx})))
+                           acc))
+            a-data (nth child-data a-min)
+            b-data (nth child-data b-max)]
+        (when (or (nil? a-data) (nil? b-data))
+          (throw (ex-info (str "Child index out of range: " idx-a " " idx-b) {})))
+        ;; Convert positions to character offsets
+        (let [lines (str/split-lines content)
+              pos->offset (fn [[r c]]
+                            (+ (dec c)
+                               (reduce + 0 (map #(+ (count %) 1)
+                                               (take (dec r) lines)))))
+              a-start (pos->offset (:start a-data))
+              a-end (pos->offset (:end a-data))
+              b-start (pos->offset (:start b-data))
+              b-end (pos->offset (:end b-data))
+              ;; Extract gaps from source
+              form-start (pos->offset (z/position target-zloc))
+              form-end (pos->offset (second (z/position-span target-zloc)))
+              form-text (subs content form-start form-end)
+              ;; Adjust offsets to be relative to form-text
+              rel-a-start (- a-start form-start)
+              rel-a-end (- a-end form-start)
+              rel-b-start (- b-start form-start)
+              rel-b-end (- b-end form-start)
+              a-gap-start (min rel-a-start rel-b-start)
+              b-gap-end (max rel-a-end rel-b-end)
+              ;; Which child comes first in source?
+              first-is-a (< rel-a-start rel-b-start)
+              ;; Gaps based on source order
+              gap1 (subs form-text 0 (if first-is-a rel-a-start rel-b-start))
+              mid (subs form-text (if first-is-a rel-a-end rel-b-end) (if first-is-a rel-b-start rel-a-start))
+              gap2 (subs form-text (if first-is-a rel-b-end rel-a-end))
+              ;; Rebuild with swapped nodes
+              new-form-text (str gap1
+                                (if first-is-a (:text b-data) (:text a-data))
+                                mid
+                                (if first-is-a (:text a-data) (:text b-data))
+                                gap2)
+              new-node (p/parse-string-all new-form-text)
+              replaced (z/replace target-zloc new-node)]
+          {:old_text old-text
+           :new_text (z/root-string replaced)
+           :base-content content
+           :new-content (z/root-string replaced)})))))
+
+(defn remove-child
+  "Remove child at index from the target form."
+  [content target-id idx]
+  (let [[row col] (map parse-long (str/split target-id #":"))
+        zloc (z/of-string content {:track-position? true})
+        target-zloc (find-zloc-by-position zloc [row col])
+        children (list-children target-zloc)]
+    (when-not target-zloc
+      (throw (ex-info (str "Target not found at " target-id) {})))
+    (let [old-text (node-text target-zloc)
+          kept (keep-indexed (fn [i v] (when (not= i idx) v)) children)
+          new-target-str (str "(" (str/join " " (map n/string kept)) ")")
+          new-node (p/parse-string-all new-target-str)
+          replaced (z/replace target-zloc new-node)]
+      {:old_text old-text
+       :new_text (z/root-string replaced)
+       :base-content content
+       :new-content (z/root-string replaced)})))
+
+
+
+(defn splice-form
+  "Splice (unparent) the target form: replace its parent list with the target itself.
+   E.g., (foo (bar (target)))  with target at (target) -> (foo (target))
+   Useful for removing unnecessary wrappers like (clj->js ...)."
+  [content target-id]
+  (let [[row col] (map parse-long (str/split target-id #":"))
+        zloc (z/of-string content {:track-position? true})
+        target-zloc (find-zloc-by-position zloc [row col])]
+    (when-not target-zloc
+      (throw (ex-info (str "Target not found at " target-id) {})))
+    (let [parent (z/up target-zloc)]
+      (when-not parent
+        (throw (ex-info "Cannot splice: target has no parent" {})))
+      (let [old-parent-text (node-text parent)
+            node (z/node target-zloc)
+            replaced (z/replace parent node)]
+        {:old_text old-parent-text
+         :new_text (z/root-string replaced)
+         :base-content content
+         :new-content (z/root-string replaced)}))))
+
+(defn wrap-form
+  "Wrap target form in a wrapper template.
+   Wrapper must contain exactly one %FORM% placeholder."
+  [content target-id wrapper-text]
+  (when-not (str/includes? wrapper-text "%FORM%")
+    (throw (ex-info "Wrapper must contain %FORM% placeholder" {})))
+  (let [[row col] (map parse-long (str/split target-id #":"))
+        zloc (z/of-string content {:track-position? true})
+        target-zloc (find-zloc-by-position zloc [row col])]
+    (when-not target-zloc
+      (throw (ex-info (str "Target not found at " target-id) {})))
+    (let [old-text (node-text target-zloc)
+          full-text (str/replace wrapper-text "%FORM%" old-text)
+          new-node (p/parse-string full-text)
+          replaced (z/replace target-zloc new-node)]
+      {:old_text old-text
+       :new_text (z/root-string replaced)
+       :base-content content
+       :new-content (z/root-string replaced)})))
+(defn unwrap-form
+  "Unwrap a wrapper form: replace (fn arg ...) with its first child after fn.
+   Useful for removing (clj->js ...) wrappers: target clj->js, unwrap keeps next child.
+   Unlike splice which goes UP to parent, unwrap stays at the same level
+   and removes the outer form, keeping the inner content."
+  [content target-id]
+  (let [[row col] (map parse-long (str/split target-id #":"))
+        zloc (z/of-string content)
+        ;; Find the form by looking for the symbol at target position
+        ;; Use rewrite-clj's tree walk
+        target-zloc (z/find-value zloc z/next (symbol (str "?")))]  ;; placeholder
+    ;; Actually, target-id won't work for position-based. Instead:
+    ;; Find by navigating the AST
+    nil))
+
+(defn unwrap-by-symbol
+  "Find a form by its first child symbol and unwrap it.
+   E.g., find (clj->js ...) and replace it with its inner content.
+   Uses z/find-value to locate, bypassing position tracking issues in babashka."
+  [content sym-str]
+  (let [sym (symbol sym-str)
+        zloc (z/of-string content)
+        found (z/find-value zloc z/next sym)]
+    (if-not found
+      (throw (ex-info (str "Symbol not found: " sym-str) {}))
+      (let [parent (z/up found)]
+        (if-not parent
+          (throw (ex-info (str sym-str " has no parent to unwrap") {}))
+          (let [inner (-> parent z/down z/right)]
+            (if-not inner
+              (throw (ex-info (str sym-str " wrapper has no content") {}))
+              (let [old-text (n/string (z/node parent))
+                    replaced (z/replace parent (z/node inner))]
+                {:old_text old-text
+                 :new_text (z/root-string replaced)
+                 :base-content content
+                 :new-content (z/root-string replaced)}))))))))
+
+(defn insert-child
+  "Insert new-form-text as child at index in the target form."
+  [content target-id idx new-form-text]
+  (let [[row col] (map parse-long (str/split target-id #":"))
+        zloc (z/of-string content {:track-position? true})
+        target-zloc (find-zloc-by-position zloc [row col])
+        children (list-children target-zloc)]
+    (when-not target-zloc
+      (throw (ex-info (str "Target not found at " target-id) {})))
+    (let [old-text (node-text target-zloc)
+          new-node (p/parse-string new-form-text)
+          new-children (-> (vec children) (vec) (#(if (>= idx (count %)) (conj % new-node) (into [] (concat (subvec % 0 idx) [new-node] (subvec % idx))))))
+          new-target-str (str "(" (str/join " " (map n/string new-children)) ")")
+          parsed (p/parse-string-all new-target-str)
+          replaced (z/replace target-zloc parsed)]
+      {:old_text old-text
+       :new_text (z/root-string replaced)
+       :base-content content
+       :new-content (z/root-string replaced)})))
 
 (defn strip-bom
   "Strip UTF-8 BOM if present. Returns [bom text]."
@@ -138,12 +405,12 @@
 (defn apply-edits-pi-style
   "Apply edits matching pi's semantics:
    - All edits matched against the SAME original content
-   - Each oldText must be unique (unless --all)
+   - Each oldText must be unique (unless :replace-all is true)
    - Edits must not overlap
    - Applied in reverse order by match position (stable offsets)
    - If any edit needs fuzzy matching, all run in fuzzy-normalized space
    Returns {:ok new-content} or {:error message}."
-  [content edits]
+  [content edits & {:keys [replace-all]}]
   (when (empty? edits)
     (throw (ex-info "No edits provided" {})))
 
@@ -172,9 +439,9 @@
                                      "  edits[" i "]: " (pr-str (subs (:old edit) 0 (min 80 (count (:old edit))))))
                                 {:edit-index i}))
                 (let [occurrences (count-occurrences base-content (:old edit))]
-                  (when (> occurrences 1)
+                  (when (and (> occurrences 1) (not replace-all))
                     (throw (ex-info (str "Found " occurrences " occurrences of edits[" i "] in file. "
-                                         "Each oldText must be unique. Please provide more context.")
+                                         "Each oldText must be unique (or use --replace-all).")
                                     {:edit-index i :occurrences occurrences})))
                   (recur (inc i)
                          (conj result {:edit-index    i
@@ -208,6 +475,21 @@
         (throw (ex-info "No changes made. The replacement produced identical content." {}))
         {:base-content base-content
          :new-content  new-content}))))
+
+(defn replace-all
+  "Replace ALL occurrences of each old->new mapping.
+   Unlike apply-edits-pi-style, this does global string replacement
+   (not position-based). Skips uniqueness check entirely.
+   Useful for batch refactoring (e.g. color constants)."
+  [content edits]
+  (let [result (reduce (fn [txt {:keys [old new]}]
+                         (str/replace txt old new))
+                       content
+                       edits)]
+    (if (= content result)
+      (throw (ex-info "No changes made." {}))
+      {:base-content content
+       :new-content  result})))
 
 ;; ============================================================
 ;; --edit spec parsing
@@ -247,6 +529,14 @@
           (= k "--sep")     (recur (rest rst) (assoc opts :sep (first rst)) edits)
           (= k "--dry-run") (recur rst (assoc opts :dry-run true) edits)
           (= k "--format")  (recur rst (assoc opts :format true) edits)
+          (= k "--target")  (recur (rest rst) (assoc opts :target (first rst)) edits)
+          (= k "--op")      (recur (rest rst) (assoc opts :op (keyword (first rst))) edits)
+          (= k "--swap")    (recur (rest rst) (assoc opts :swap (first rst)) edits)
+          (= k "--idx")     (recur (rest rst) (assoc opts :idx (first rst)) edits)
+          (= k "--wrap")    (recur (rest rst) (assoc opts :wrap (first rst)) edits)
+          (= k "--replace-all") (recur rst (assoc opts :replace-all true) edits)
+          (= k "--mapping-file") (recur (rest rst) (assoc opts :mapping-file (first rst)) edits)
+          (= k "--unwrap-symbol") (recur (rest rst) (assoc opts :unwrap-symbol (first rst)) edits)
           :else             (recur rst opts edits))))))
 
 ;; ============================================================
@@ -286,10 +576,20 @@
                   (and (:old opts) (some? (:new opts)))
                   [{:old (:old opts) :new (:new opts)}]
 
+                  (:target opts)
+                  nil  ; handled below, not text-based
+
+                  (:mapping-file opts)
+                  []  ; handled below, reads from file
+
+                  (:unwrap-symbol opts)
+                  []  ; handled below
+
                   :else
-                  (do (println "ERROR: provide --old/--new, --edit, or --edits")
+                  (do (println "ERROR: provide --old/--new, --edit, --edits, or --target")
                       (System/exit 1)))
 
+          target  (:target opts)
           file    (:file opts)
           raw     (slurp file)
 
@@ -299,12 +599,70 @@
           normalized    (normalize-to-lf content)]
 
       ;; Apply edits (pi-style: all against original, reverse order)
+      ;; OR target-based (AST replacement by position)
       (try
-        (let [{:keys [base-content new-content]}
-              (apply-edits-pi-style normalized edits)
+        (if target
+          (let [op        (:op opts)
+                new-text  (:new opts)
+                swap-idxs (when (:swap opts) (map parse-long (str/split (:swap opts) #",")))
+                idx       (when (:idx opts) (parse-long (:idx opts)))
 
-              ;; Restore BOM and original line endings
-              final-content (str bom (restore-line-endings new-content line-ending))]
+                result
+                (case op
+                  :swap (swap-children normalized target (first swap-idxs) (second swap-idxs))
+                  :remove (remove-child normalized target idx)
+                  :insert (insert-child normalized target idx new-text)
+                  :splice (splice-form normalized target)
+                  :wrap (wrap-form normalized target new-text)
+                  ;; default: replace entire form
+                  (replace-by-target normalized target new-text))
+
+                new-content (:new-content result)
+                final-content (str bom (restore-line-endings new-content line-ending))]
+            (let [vr (validate-code final-content)]
+              (if (:valid vr)
+                (if (:dry-run opts)
+                  (do (println (str "OK: target " target " would replace " (count (:old_text result)) " chars"))
+                      (System/exit 0))
+                  (do (spit file final-content)
+                      (when (:format opts)
+                        (let [fmt-result (sh "clojure-lsp" "format" "--filenames" file)]
+                          (if (zero? (:exit fmt-result))
+                            (println (str "OK: " file " updated (target " target ", formatted)"))
+                            (println (str "OK: " file " updated (target " target ", format failed: " (str/trim (:err fmt-result)) ")")))))
+                      (when-not (:format opts)
+                        (println (str "OK: " file " updated (target " target ", replaced " (count (:old_text result)) " chars)")))
+                      (System/exit 0)))
+                (do (println (str "ERROR: target edit would break brackets in " file))
+                    (println (str "  " (:error vr)))
+                    (println "  File NOT modified.")
+                    (System/exit 1))))))
+
+          ;; ─── Text-based edit ───
+          (let [result (cond
+                        (:mapping-file opts)
+                        (let [map-path (:mapping-file opts)
+                              lines (str/split-lines (slurp map-path))
+                              map-edits (mapv (fn [line]
+                                               (let [[_ old new] (re-matches #"([^|]+)\|\|([^|]+)" line)]
+                                                 (when (and old new) {:old old :new new})))
+                                              lines)
+                              valid (remove nil? map-edits)]
+                          (if (empty? valid)
+                            (do (println "ERROR: no valid mappings found in " map-path)
+                                (System/exit 1))
+                            (replace-all normalized valid)))
+
+                        (:replace-all opts)
+                        (replace-all normalized edits)
+
+                        (:unwrap-symbol opts)
+                        (unwrap-by-symbol normalized (:unwrap-symbol opts))
+
+                        :else
+                        (apply-edits-pi-style normalized edits))
+                new-content (:new-content result)
+                final-content (str bom (restore-line-endings new-content line-ending))]
 
           ;; Validate with rewrite-clj
           (let [vr (validate-code final-content)]
@@ -316,10 +674,10 @@
                     (when (:format opts)
                       (let [fmt-result (sh "clojure-lsp" "format" "--filenames" file)]
                         (if (zero? (:exit fmt-result))
-                          (println (str "OK: " file " updated (" (count edits) " edit(s), formatted)"))
-                          (println (str "OK: " file " updated (" (count edits) " edit(s), format failed: " (str/trim (:err fmt-result)) ")")))))
+                          (println (str "OK: " file " updated" (when (:mapping-file opts) (str " (mapping: " (:mapping-file opts) ")")) (when (and (not (:mapping-file opts)) (seq edits)) (str " (" (count edits) " edit(s))")) ", formatted)"))
+                          (println (str "OK: " file " updated" (when (:mapping-file opts) (str " (mapping: " (:mapping-file opts) ")")) (when (and (not (:mapping-file opts)) (seq edits)) (str " (" (count edits) " edit(s))")) ", format failed: " (str/trim (:err fmt-result)) ")")))))
                     (when-not (:format opts)
-                      (println (str "OK: " file " updated (" (count edits) " edit(s))")))
+                      (println (str "OK: " file " updated" (when (:mapping-file opts) (str " (mapping: " (:mapping-file opts) ")")) (when (and (not (:mapping-file opts)) (seq edits)) (str " (" (count edits) " edit(s))")))))
                     (System/exit 0)))
               (do (println (str "ERROR: edits would break brackets in " file))
                   (println (str "  " (:error vr)))

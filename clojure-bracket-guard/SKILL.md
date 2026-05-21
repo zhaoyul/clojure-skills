@@ -1,13 +1,3 @@
----
-name: clojure-bracket-guard
-description: >
-  Validates Clojure code for balanced parentheses/brackets/braces before
-  writing to files. Use when writing or editing .clj, .cljs, .cljc, .cljd,
-  or .edn files to prevent broken code from being saved. A feature-complete
-  replacement for built-in edit tools with added bracket validation and
-  optional clojure-lsp formatting.
----
-
 # Clojure Bracket Guard
 
 ## Rule
@@ -80,6 +70,77 @@ bb scripts/safe-edit.clj --file src/core.clj --format --old 'old' --new 'new'
 
 ```bash
 bb scripts/safe-edit.clj --dry-run --file src/core.clj --old 'old' --new 'new'
+```
+
+## Target-based editing (bypasses text matching)
+
+Use `--target <row:col>` to locate a form by its source position, then
+use `--op swap|remove|insert|splice|wrap` for structural operations.
+
+### Swap children (e.g. move docstring before args)
+
+```bash
+# Children are 0-indexed: 0=defn, 1=name, 2=argvec, 3=docstring
+# Swap children 2 and 3 to move docstring before args vector
+bb scripts/safe-edit.clj --file src/core.clj \
+  --target "23:1" --op swap --swap "2,3"
+```
+
+### Remove child
+
+```bash
+bb scripts/safe-edit.clj --file src/core.clj \
+  --target "23:1" --op remove --idx 2
+```
+
+### Insert child
+
+```bash
+bb scripts/safe-edit.clj --file src/core.clj \
+  --target "23:1" --op insert --idx 2 --new '"new docstring"'
+```
+
+### Splice (remove parent, keep inner form)
+
+```bash
+# Unwrap (clj->js ...) → keep inner content
+bb scripts/safe-edit.clj --file src/core.clj \
+  --target "10:1" --op splice
+```
+
+### Wrap (wrap target in outer form)
+
+```bash
+bb scripts/safe-edit.clj --file src/core.clj \
+  --target "10:1" --op wrap --new '(fn [x] %FORM%)'
+```
+
+## Batch editing
+
+### Replace all occurrences (skip uniqueness check)
+
+```bash
+bb scripts/safe-edit.clj --file src/core.clj \
+  --edit '(m/Color 0xff333333)>theme/text-primary' \
+  --edit '(m/Color 0xff777777)>theme/text-hint' \
+  --replace-all
+```
+
+### Mapping file (for bulk replacements)
+
+File format: `old text||new text` (one per line)
+
+```bash
+bb scripts/safe-edit.clj --file src/core.clj \
+  --mapping-file color-map.txt
+```
+
+### Unwrap by symbol (find form by its first child symbol)
+
+```bash
+# Remove (clj->js ...) wrapper from all occurrences
+bb scripts/safe-edit.clj --file src/core.cljs \
+  --unwrap-symbol "clj->js"
 ```
 
 ## What safe-edit does
